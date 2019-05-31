@@ -280,6 +280,7 @@ public class EthereumFacade {
     /**
      * Compiles the solidity file
      * @param src the source file
+     * @param evmVersion the target EthereumVM version. Optional, by default it will take the latest one
      * @return The compilation result
      */
     public CompilationResult compile(SoliditySourceFile src, Optional<EvmVersion> evmVersion) {
