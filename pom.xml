@@ -18,9 +18,9 @@
 
     <distributionManagement>
         <repository>
-            <id>bintray</id>
-            <name>Cubefriendly maven repo</name>
-            <url>https://api.bintray.com/maven/cubefriendly/maven/eth-propeller-core</url>
+            <id>bintray-cubefriendly-maven</id>
+            <name>cubefriendly-maven</name>
+            <url>https://api.bintray.com/maven/cubefriendly/maven/eth-propeller-core/;publish=1</url>
         </repository>
     </distributionManagement>
 
