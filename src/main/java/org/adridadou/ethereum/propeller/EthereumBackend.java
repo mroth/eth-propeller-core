@@ -4,6 +4,7 @@ import org.adridadou.ethereum.propeller.event.BlockInfo;
 import org.adridadou.ethereum.propeller.event.EthereumEventHandler;
 import org.adridadou.ethereum.propeller.solidity.SolidityEvent;
 import org.adridadou.ethereum.propeller.values.*;
+import org.web3j.protocol.core.DefaultBlockParameter;
 
 import java.math.BigInteger;
 import java.util.List;
@@ -38,7 +39,7 @@ public interface EthereumBackend {
 
     CompletableFuture<EthData> constantCall(EthAccount account, EthAddress address, EthValue value, EthData data);
 
-    List<EventData> logCall(final SolidityEvent eventDefinition, EthAddress address, final String... optionalTopics);
+    List<EventData> logCall(final DefaultBlockParameter fromBlock, final DefaultBlockParameter toBlock, final SolidityEvent eventDefinition, EthAddress address, final String... optionalTopics);
 
     void register(EthereumEventHandler eventHandler);
 
