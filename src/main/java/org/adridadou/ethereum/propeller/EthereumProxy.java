@@ -45,11 +45,11 @@ class EthereumProxy {
 
     private final Map<TransactionRequest, CompletableFuture<TransactionExecutionResult>> futureMap = new ConcurrentHashMap<>();
 
-    private final EthereumBackend ethereum;
+    private final EthereumBackendManager ethereum;
     private final EthereumEventHandler eventHandler;
     private final EthereumConfig config;
     private final Map<EthAddress, Set<EthHash>> pendingTransactions = new HashMap<>();
-    private final Map<EthAddress, Nonce> nonces = new ConcurrentHashMap<>();
+    private final Map<EthAddress, CompletableFuture<Nonce>> nonces = new ConcurrentHashMap<>();
     private final Map<SolidityTypeGroup, List<SolidityTypeEncoder>> encoders = new HashMap<>();
     private final Map<SolidityTypeGroup, List<SolidityTypeDecoder>> decoders = new HashMap<>();
     private final List<Class<? extends CollectionDecoder>> listDecoders = new ArrayList<>();
@@ -59,7 +59,7 @@ class EthereumProxy {
     private final ReentrantLock nonceLock = new ReentrantLock();
     private final ReentrantLock txLock = new ReentrantLock();
 
-    EthereumProxy(EthereumBackend ethereum, EthereumEventHandler eventHandler, EthereumConfig config) {
+    EthereumProxy(EthereumBackendManager ethereum, EthereumEventHandler eventHandler, EthereumConfig config) {
         this.ethereum = ethereum;
         this.eventHandler = eventHandler;
         this.config = config;
@@ -129,18 +129,18 @@ class EthereumProxy {
         return createContract(contract, account, constructorArgs);
     }
 
-    Nonce getNonce(final EthAddress address) {
+    CompletableFuture<Nonce> getNonce(final EthAddress address) {
         try {
             nonceLock.lock();
             nonces.computeIfAbsent(address, ethereum::getNonce);
             Integer offset = Optional.ofNullable(pendingTransactions.get(address)).map(Set::size).orElse(0);
-            return nonces.get(address).add(offset);
+            return nonces.get(address).thenApply(n -> n.add(offset));
         } finally {
             nonceLock.unlock();
         }
     }
 
-    SmartContractByteCode getCode(EthAddress address) {
+    CompletableFuture<SmartContractByteCode> getCode(EthAddress address) {
         return ethereum.getCode(address);
     }
 
@@ -172,7 +172,7 @@ class EthereumProxy {
     }
 
     public SmartContract getSmartContract(SolidityContractDetails details, EthAddress address, EthAccount account) {
-        return new SmartContract(details, account, address, this, ethereum);
+        return new SmartContract(details, account, address, this);
     }
 
     private CompletableFuture<EthAddress> createContract(SolidityContractDetails contract, EthAccount account, Object... constructorArgs) {
@@ -180,7 +180,7 @@ class EthereumProxy {
     }
 
     private CompletableFuture<EthAddress> createContractWithValue(SolidityContractDetails contract, EthAccount account, EthValue value, Object... constructorArgs) {
-        EthData argsEncoded = new SmartContract(contract, account, EthAddress.empty(), this, ethereum)
+        EthData argsEncoded = new SmartContract(contract, account, EthAddress.empty(), this)
                 .getConstructor(constructorArgs)
                 .map(constructor -> constructor.encode(constructorArgs))
                 .orElseGet(() -> {
@@ -215,13 +215,8 @@ class EthereumProxy {
     }
 
     private CompletableFuture<CallDetails> sendTxInternal(EthValue value, EthData data, EthAccount account, EthAddress toAddress) {
-        return eventHandler.ready().thenCompose(v -> {
-            GasUsage gasLimit = estimateGas(value, data, account, toAddress);
-            GasPrice gasPrice = ethereum.getGasPrice();
-
-            return submitTransaction(new TransactionRequest(account, toAddress, value, data, gasLimit, gasPrice))
-                    .thenApply(executionResult -> new CallDetails(this.waitForResult(executionResult.transactionHash), executionResult.transactionHash, executionResult.nonce, gasLimit));
-        });
+        return eventHandler.ready().thenCompose(v -> estimateGas(value, data, account, toAddress).thenCompose(gasLimit -> ethereum.getGasPrice().thenCompose(gasPrice -> submitTransaction(new TransactionRequest(account, toAddress, value, data, gasLimit, gasPrice))
+                .thenApply(executionResult -> new CallDetails(this.waitForResult(executionResult.transactionHash), executionResult.transactionHash, executionResult.nonce, gasLimit)))));
     }
 
     private CompletableFuture<TransactionReceipt> waitForResult(EthHash txHash) {
@@ -268,13 +263,14 @@ class EthereumProxy {
         return futureResult;
     }
 
-    public GasUsage estimateGas(EthValue value, EthData data, EthAccount account, EthAddress toAddress) {
-        GasUsage gasLimit = ethereum.estimateGas(account, toAddress, value, data);
-        //if it is a contract creation
-        if (toAddress.isEmpty()) {
-            gasLimit = gasLimit.add(ADDITIONAL_GAS_FOR_CONTRACT_CREATION);
-        }
-        return gasLimit.add(ADDITIONAL_GAS_DIRTY_FIX);
+    public CompletableFuture<GasUsage> estimateGas(EthValue value, EthData data, EthAccount account, EthAddress toAddress) {
+        return ethereum.estimateGas(account, toAddress, value, data).thenApply(gasLimit -> {
+            //if it is a contract creation
+            if (toAddress.isEmpty()) {
+                gasLimit = gasLimit.add(ADDITIONAL_GAS_FOR_CONTRACT_CREATION);
+            }
+            return gasLimit.add(ADDITIONAL_GAS_DIRTY_FIX);
+        });
     }
 
     public Set<EthHash> getPendingTransactions(EthAddress address) {
@@ -336,11 +332,11 @@ class EthereumProxy {
         return eventHandler;
     }
 
-    boolean addressExists(final EthAddress address) {
+    CompletableFuture<Boolean> addressExists(final EthAddress address) {
         return ethereum.addressExists(address);
     }
 
-    EthValue getBalance(final EthAddress address) {
+    CompletableFuture<EthValue> getBalance(final EthAddress address) {
         return ethereum.getBalance(address);
     }
 
@@ -456,11 +452,15 @@ class EthereumProxy {
         return eventHandler.getCurrentBlockNumber();
     }
 
-    public Optional<TransactionInfo> getTransactionInfo(EthHash hash) {
+    public CompletableFuture<Optional<TransactionInfo>> getTransactionInfo(EthHash hash) {
         return ethereum.getTransactionInfo(hash);
     }
 
     public ChainId getChainId() {
         return ethereum.getChainId();
+    }
+
+    public CompletableFuture<EthData> constantCall(EthAccount account, EthAddress address, EthValue value, EthData data) {
+        return ethereum.constantCall(account, address, value, data);
     }
 }

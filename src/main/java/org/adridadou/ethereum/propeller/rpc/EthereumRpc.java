@@ -1,12 +1,12 @@
 package org.adridadou.ethereum.propeller.rpc;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.math.BigInteger;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
+import io.reactivex.Observable;
+import io.reactivex.Single;
 import org.adridadou.ethereum.propeller.EthereumBackend;
 import org.adridadou.ethereum.propeller.event.BlockInfo;
 import org.adridadou.ethereum.propeller.event.EthereumEventHandler;
@@ -42,25 +42,40 @@ public class EthereumRpc implements EthereumBackend {
     }
 
     @Override
-    public GasPrice getGasPrice() {
+    public CompletableFuture<GasPrice> getGasPrice() {
         return web3JFacade.getGasPrice();
     }
 
     @Override
-    public EthValue getBalance(EthAddress address) {
-        return EthValue.wei(web3JFacade.getBalance(address).getBalance());
+    public CompletableFuture<EthValue> getBalance(EthAddress address) {
+        return web3JFacade.getBalance(address);
     }
 
     @Override
-    public boolean addressExists(EthAddress address) {
-        return web3JFacade.getTransactionCount(address).intValue() > 0 || web3JFacade.getBalance(address).getBalance().intValue() > 0 || !web3JFacade.getCode(address).isEmpty();
+    public CompletableFuture<Boolean> addressExists(EthAddress address) {
+        return web3JFacade.getTransactionCount(address)
+                .thenCompose(result -> {
+                    if(result.compareTo(BigInteger.ZERO) > 0) {
+                        return CompletableFuture.completedFuture(true);
+                    } else {
+                        return web3JFacade.getBalance(address).thenCompose(balance -> {
+                            if(!balance.isZero()) {
+                                return CompletableFuture.completedFuture(true);
+                            } else {
+                                return web3JFacade.getCode(address).thenApply(SmartContractByteCode::isEmpty);
+                            }
+                        });
+                    }
+        });
     }
 
     @Override
-    public EthHash submit(TransactionRequest request, Nonce nonce) {
-            org.apache.tuweni.eth.Transaction transaction = createTransaction(nonce, getGasPrice(), request);
-            web3JFacade.sendTransaction(EthData.of(transaction.toBytes().toArray()));
-            return EthHash.of(transaction.hash().toBytes().toArray());
+    public CompletableFuture<EthHash> submit(TransactionRequest request, Nonce nonce) {
+        return getGasPrice().thenCompose(gasPrice -> {
+            org.apache.tuweni.eth.Transaction transaction = createTransaction(nonce, gasPrice, request);
+            return web3JFacade.sendTransaction(EthData.of(transaction.toBytes().toArray()))
+                    .thenApply(r -> EthHash.of(transaction.hash().toBytes().toArray()));
+        });
     }
 
     private org.apache.tuweni.eth.Transaction createTransaction(Nonce nonce, GasPrice gasPrice, TransactionRequest request) {
@@ -84,37 +99,37 @@ public class EthereumRpc implements EthereumBackend {
     }
 
     @Override
-    public GasUsage estimateGas(EthAccount account, EthAddress address, EthValue value, EthData data) {
-        return new GasUsage(web3JFacade.estimateGas(account, address, value, data));
+    public CompletableFuture<GasUsage> estimateGas(EthAccount account, EthAddress address, EthValue value, EthData data) {
+        return web3JFacade.estimateGas(account, address, value, data).thenApply(GasUsage::new);
     }
 
     @Override
-    public Nonce getNonce(EthAddress currentAddress) {
-        return new Nonce(web3JFacade.getTransactionCount(currentAddress));
+    public CompletableFuture<Nonce> getNonce(EthAddress currentAddress) {
+        return web3JFacade.getTransactionCount(currentAddress).thenApply(Nonce::new);
     }
 
     @Override
-    public long getCurrentBlockNumber() {
+    public CompletableFuture<BigInteger> getCurrentBlockNumber() {
         return web3JFacade.getCurrentBlockNumber();
     }
 
     @Override
-    public Optional<BlockInfo> getBlock(long number) {
-        return web3JFacade.getBlock(number).map(this::toBlockInfo);
+    public CompletableFuture<Optional<BlockInfo>> getBlock(long number) {
+        return web3JFacade.getBlock(number).thenCompose(this::toBlockInfo);
     }
 
     @Override
-    public Optional<BlockInfo> getBlock(EthHash ethHash) {
-        return web3JFacade.getBlock(ethHash).map(this::toBlockInfo);
+    public CompletableFuture<Optional<BlockInfo>> getBlock(EthHash ethHash) {
+        return web3JFacade.getBlock(ethHash).thenCompose(this::toBlockInfo);
     }
 
     @Override
-    public SmartContractByteCode getCode(EthAddress address) {
+    public CompletableFuture<SmartContractByteCode> getCode(EthAddress address) {
         return web3JFacade.getCode(address);
     }
 
     @Override
-    public EthData constantCall(EthAccount account, EthAddress address, EthValue value, EthData data) {
+    public CompletableFuture<EthData> constantCall(EthAccount account, EthAddress address, EthValue value, EthData data) {
         return web3JFacade.constantCall(account, address, data);
     }
 
@@ -128,17 +143,23 @@ public class EthereumRpc implements EthereumBackend {
         ethereumRpcEventGenerator.addListener(eventHandler);
     }
 
+    private <T> Observable<T> toObservable(Optional<T> opt) {
+        return Observable.fromIterable(opt.map(Collections::singleton)
+                .orElseGet(Collections::emptySet));
+    }
+
     @Override
-    public Optional<TransactionInfo> getTransactionInfo(EthHash hash) {
-        return Optional.ofNullable(web3JFacade.getReceipt(hash))
-                .filter(web3jReceipt -> web3jReceipt.getBlockHash() != null) //Parity gives receipt even if not included yet
-                .flatMap(web3jReceipt -> Optional.ofNullable(web3JFacade.getTransaction(hash))
-                .map(transaction -> {
-                    TransactionReceipt receipt = toReceipt(transaction, web3jReceipt);
-                    TransactionStatus status = transaction.getBlockHash().isEmpty() ? TransactionStatus.Unknown : TransactionStatus.Executed;
-                    return new TransactionInfo(hash, receipt, status, EthHash.of(transaction.getBlockHash()));
-                })
-        );
+    public CompletableFuture<Optional<TransactionInfo>> getTransactionInfo(EthHash hash) {
+        return fromObservable(Observable.fromFuture(web3JFacade.getReceipt(hash))
+            .flatMap(this::toObservable)
+            .filter(web3jReceipt -> web3jReceipt.getBlockHash() != null) //Parity gives receipt even if not included yet
+            .flatMap(web3jReceipt -> Observable.fromFuture(web3JFacade.getTransaction(hash))
+                    .flatMap(this::toObservable)
+                    .map(transaction -> {
+                        TransactionReceipt receipt = toReceipt(transaction, web3jReceipt);
+                        TransactionStatus status = transaction.getBlockHash().isEmpty() ? TransactionStatus.Unknown : TransactionStatus.Executed;
+                        return Optional.of(new TransactionInfo(hash, receipt, status, EthHash.of(transaction.getBlockHash())));
+                    })).single(Optional.empty()));
     }
 
     @Override
@@ -146,28 +167,35 @@ public class EthereumRpc implements EthereumBackend {
         return chainId;
     }
 
-    BlockInfo toBlockInfo(EthBlock ethBlock) {
-        return Optional.ofNullable(ethBlock.getBlock()).map(block -> {
-            try {
-                Map<String, EthBlock.TransactionObject> txObjects = block.getTransactions().stream()
-                        .map(tx -> (EthBlock.TransactionObject) tx.get()).collect(Collectors.toMap(EthBlock.TransactionObject::getHash, e -> e));
+    private  <T> CompletableFuture<T> fromObservable(Single<T> single) {
+        final CompletableFuture<T> future = new CompletableFuture<>();
+        single
+                .doOnError(future::completeExceptionally)
+                .doOnSuccess(future::complete);
+        return future;
+    }
 
-                Map<String, org.web3j.protocol.core.methods.response.TransactionReceipt> receipts = txObjects.values().stream()
-                        .map(tx -> Optional.ofNullable(web3JFacade.getReceipt(EthHash.of(tx.getHash()))))
-                        .filter(Optional::isPresent)
-                        .map(Optional::get)
-                        .filter(web3jReceipt -> web3jReceipt.getBlockHash() != null) //Parity gives receipt even if not included yet
-                        .collect(Collectors.toMap(org.web3j.protocol.core.methods.response.TransactionReceipt::getTransactionHash, e -> e));
+    CompletableFuture<Optional<BlockInfo>> toBlockInfo(Optional<EthBlock.Block> optionalBlock) {
+        return optionalBlock.map(block -> {
+            Map<String, EthBlock.TransactionObject> txObjects = block.getTransactions().stream()
+                    .map(tx -> (EthBlock.TransactionObject) tx.get()).collect(Collectors.toMap(EthBlock.TransactionObject::getHash, e -> e));
 
-                List<TransactionReceipt> receiptList = receipts.entrySet().stream()
+            Map<String, org.web3j.protocol.core.methods.response.TransactionReceipt> initValue = new HashMap<>();
+
+            Single<Map<String, org.web3j.protocol.core.methods.response.TransactionReceipt>> r = Observable.fromIterable(txObjects.values())
+                    .flatMap(transactionObject -> Observable.fromFuture(web3JFacade.getReceipt(EthHash.of(transactionObject.getHash()))))
+                    .filter(Optional::isPresent)
+                    .map(Optional::get)
+                    .filter(web3jReceipt -> web3jReceipt.getBlockHash() != null) //Parity gives receipt even if not included yet;
+                    .collectInto(initValue, (receiptMap, value) -> receiptMap.put(value.getTransactionHash(), value));
+
+            return fromObservable(r).thenApply(receiptMap -> {
+                List<TransactionReceipt> receiptList = initValue.entrySet().stream()
                         .map(entry -> toReceipt(txObjects.get(entry.getKey()), entry.getValue())).collect(Collectors.toList());
 
-                return new BlockInfo(block.getNumber().longValue(), receiptList);
-            } catch (Throwable ex) {
-                logger.error("error while converting to block info", ex);
-                return new BlockInfo(block.getNumber().longValue(), Collections.emptyList());
-            }
-        }).orElseGet(() -> new BlockInfo(-1, new ArrayList<>()));
+                return Optional.of(new BlockInfo(block.getNumber().longValue(), receiptList));
+            });
+        }).orElse(CompletableFuture.completedFuture(Optional.empty()));
     }
 
     private TransactionReceipt toReceipt(Transaction tx, org.web3j.protocol.core.methods.response.TransactionReceipt receipt) {

@@ -1,6 +1,5 @@
 package org.adridadou.ethereum.propeller.rpc;
 
-import org.adridadou.ethereum.propeller.event.BlockInfo;
 import org.adridadou.ethereum.propeller.event.EthereumEventHandler;
 import org.adridadou.ethereum.propeller.values.TransactionInfo;
 import org.adridadou.ethereum.propeller.values.TransactionStatus;
@@ -8,6 +7,7 @@ import org.web3j.protocol.core.methods.response.EthBlock;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Created by davidroon on 30.01.17.
@@ -28,13 +28,14 @@ public class EthereumRpcEventGenerator {
 
     private void observeBlocks(EthBlock ethBlock) {
         ethereumEventHandlers.forEach(EthereumEventHandler::onReady);
-        BlockInfo param = ethereum.toBlockInfo(ethBlock);
-        ethereumEventHandlers.forEach(handler -> handler.onBlock(param));
-
-        ethereumEventHandlers
-                .forEach(handler -> param.receipts
-                        .stream().map(tx -> new TransactionInfo(tx.hash, tx, TransactionStatus.Executed, tx.blockHash))
-                        .forEach(handler::onTransactionExecuted));
+        ethereum.toBlockInfo(Optional.of(ethBlock.getBlock()))
+                .thenAccept(optionalParam -> optionalParam.ifPresent(param -> {
+                    ethereumEventHandlers.forEach(handler -> handler.onBlock(param));
+                    ethereumEventHandlers
+                            .forEach(handler -> param.receipts
+                                    .stream().map(tx -> new TransactionInfo(tx.hash, tx, TransactionStatus.Executed, tx.blockHash))
+                                    .forEach(handler::onTransactionExecuted));
+                }));
     }
 
     public void addListener(EthereumEventHandler ethereumEventHandler) {

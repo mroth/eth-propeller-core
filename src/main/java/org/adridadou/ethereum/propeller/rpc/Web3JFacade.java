@@ -1,11 +1,10 @@
 package org.adridadou.ethereum.propeller.rpc;
 
-import java.io.IOError;
-import java.io.IOException;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 
 import io.reactivex.Flowable;
@@ -15,14 +14,10 @@ import org.adridadou.ethereum.propeller.values.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.web3j.protocol.Web3j;
-import org.web3j.protocol.core.DefaultBlockParameter;
-import org.web3j.protocol.core.DefaultBlockParameterName;
-import org.web3j.protocol.core.DefaultBlockParameterNumber;
-import org.web3j.protocol.core.Response;
+import org.web3j.protocol.core.*;
 import org.web3j.protocol.core.methods.request.EthFilter;
 import org.web3j.protocol.core.methods.request.Transaction;
 import org.web3j.protocol.core.methods.response.EthBlock;
-import org.web3j.protocol.core.methods.response.EthGetBalance;
 import org.web3j.protocol.core.methods.response.Log;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.utils.Numeric;
@@ -42,20 +37,16 @@ public class Web3JFacade {
         this.web3j = web3j;
     }
 
-    EthData constantCall(final EthAccount account, final EthAddress address, final EthData data) {
-        try {
-            return EthData.of(handleError(web3j.ethCall(new Transaction(
-                    account.getAddress().normalizedWithLeading0x(),
-                    null,
-                    null,
-                    null,
-                    address.normalizedWithLeading0x(),
-                    BigInteger.ZERO,
-                    data.toString()
-            ), DefaultBlockParameterName.LATEST).send()));
-        } catch (IOException e) {
-            throw new IOError(e);
-        }
+    CompletableFuture<EthData> constantCall(final EthAccount account, final EthAddress address, final EthData data) {
+        return handleErrorFutureRequest(web3j.ethCall(new Transaction(
+                account.getAddress().normalizedWithLeading0x(),
+                null,
+                null,
+                null,
+                address.normalizedWithLeading0x(),
+                BigInteger.ZERO,
+                data.toString()
+        ), DefaultBlockParameterName.LATEST)).thenApply(EthData::of);
     }
 
     List<Log> loggingCall(SolidityEvent eventDefiniton, final EthAddress address, final String... optionalTopics) {
@@ -69,12 +60,9 @@ public class Web3JFacade {
         return list;
     }
 
-    BigInteger getTransactionCount(EthAddress address) {
-        try {
-            return Numeric.decodeQuantity(handleError(web3j.ethGetTransactionCount(address.normalizedWithLeading0x(), DefaultBlockParameterName.LATEST).send()));
-        } catch (IOException e) {
-            throw new IOError(e);
-        }
+    CompletableFuture<BigInteger> getTransactionCount(EthAddress address) {
+        return handleErrorFutureRequest(web3j.ethGetTransactionCount(address.normalizedWithLeading0x(), DefaultBlockParameterName.LATEST))
+            .thenApply(Numeric::decodeQuantity);
     }
 
     Flowable<EthBlock> observeBlocks() {
@@ -115,91 +103,65 @@ public class Web3JFacade {
         return blockEventHandler.observable;
     }
 
-    BigInteger estimateGas(EthAccount account, EthAddress address, EthValue value, EthData data) {
-        try {
-            return Numeric.decodeQuantity(handleError(web3j.ethEstimateGas(new Transaction(account.getAddress().normalizedWithLeading0x(), null, null, null,
-                    address.isEmpty() ? null : address.normalizedWithLeading0x(), value.inWei(), data.toString())).send()));
-        } catch (IOException e) {
-            throw new IOError(e);
-        }
+    CompletableFuture<BigInteger> estimateGas(EthAccount account, EthAddress address, EthValue value, EthData data) {
+            return handleErrorFutureRequest(web3j.ethEstimateGas(new Transaction(account.getAddress().normalizedWithLeading0x(), null, null, null,
+                    address.isEmpty() ? null : address.normalizedWithLeading0x(), value.inWei(), data.toString())))
+                    .thenApply(Numeric::decodeQuantity);
     }
 
-    GasPrice getGasPrice() {
-        try {
-            return new GasPrice(EthValue.wei(Numeric.decodeQuantity(handleError(web3j.ethGasPrice().send()))));
-        } catch (IOException e) {
-            throw new IOError(e);
-        }
+    CompletableFuture<GasPrice> getGasPrice() {
+        return handleErrorFutureRequest(web3j.ethGasPrice())
+            .thenApply(Numeric::decodeQuantity)
+            .thenApply(EthValue::wei)
+            .thenApply(GasPrice::new);
     }
 
-    EthHash sendTransaction(final EthData rawTransaction) {
-        try {
-            return EthHash.of(handleError(web3j.ethSendRawTransaction(rawTransaction.withLeading0x()).send()));
-        } catch (IOException e) {
-            throw new IOError(e);
-        }
+    CompletableFuture<EthHash> sendTransaction(final EthData rawTransaction) {
+        return handleErrorFutureRequest(web3j.ethSendRawTransaction(rawTransaction.withLeading0x()))
+                .thenApply(EthHash::of);
     }
 
-    public EthGetBalance getBalance(EthAddress address) {
-        try {
-            return web3j.ethGetBalance(address.normalizedWithLeading0x(), DefaultBlockParameterName.LATEST).send();
-        } catch (IOException e) {
-            throw new IOError(e);
-        }
+    CompletableFuture<EthValue> getBalance(EthAddress address) {
+        return handleErrorFutureRequest(web3j.ethGetBalance(address.normalizedWithLeading0x(), DefaultBlockParameterName.LATEST))
+                .thenApply(result -> EthValue.wei(Numeric.decodeQuantity(result)));
     }
 
-    private <S, T extends Response<S>> S handleError(final T response) {
-        if (response.hasError()) {
-            throw new EthereumApiException(response.getError().getMessage());
-        }
-        return response.getResult();
+    CompletableFuture<SmartContractByteCode> getCode(EthAddress address) {
+        return handleErrorFutureRequest(web3j.ethGetCode(address.normalizedWithLeading0x(), DefaultBlockParameterName.LATEST))
+            .thenApply(SmartContractByteCode::of);
     }
 
-    SmartContractByteCode getCode(EthAddress address) {
-        try {
-            return SmartContractByteCode.of(web3j.ethGetCode(address.normalizedWithLeading0x(), DefaultBlockParameterName.LATEST).send().getCode());
-        } catch (IOException e) {
-            throw new IOError(e);
-        }
+    CompletableFuture<BigInteger> getCurrentBlockNumber() {
+        return handleErrorFutureRequest(web3j.ethBlockNumber())
+                .thenApply(Numeric::decodeQuantity);
     }
 
-    long getCurrentBlockNumber() {
-        try {
-            return web3j.ethBlockNumber().send().getBlockNumber().longValue();
-        } catch (IOException e) {
-            throw new IOError(e);
-        }
+    CompletableFuture<Optional<TransactionReceipt>> getReceipt(EthHash hash) {
+        return handleErrorFutureRequest(web3j.ethGetTransactionReceipt(hash.withLeading0x()))
+                .thenApply(Optional::ofNullable);
     }
 
-    TransactionReceipt getReceipt(EthHash hash) {
-        try {
-            return handleError(web3j.ethGetTransactionReceipt(hash.withLeading0x()).send());
-        } catch (IOException e) {
-            throw new EthereumApiException("error while retrieving the transactionReceipt", e);
-        }
+    CompletableFuture<Optional<org.web3j.protocol.core.methods.response.Transaction>> getTransaction(EthHash hash) {
+        return handleErrorFutureRequest(web3j.ethGetTransactionByHash(hash.withLeading0x()))
+                .thenApply(Optional::ofNullable);
     }
 
-    org.web3j.protocol.core.methods.response.Transaction getTransaction(EthHash hash) {
-        try {
-            return handleError(web3j.ethGetTransactionByHash(hash.withLeading0x()).send());
-        } catch (IOException e) {
-            throw new EthereumApiException("error while retrieving the transactionReceipt", e);
-        }
+    CompletableFuture<Optional<EthBlock.Block>> getBlock(long blockNumber) {
+        return handleErrorFutureRequest(web3j.ethGetBlockByNumber(new DefaultBlockParameterNumber(BigInteger.valueOf(blockNumber)), true))
+                .thenApply(Optional::ofNullable);
     }
 
-    Optional<EthBlock> getBlock(long blockNumber) {
-        try {
-            return Optional.ofNullable(web3j.ethGetBlockByNumber(new DefaultBlockParameterNumber(BigInteger.valueOf(blockNumber)), true).send());
-        } catch (IOException e) {
-            throw new EthereumApiException("error while retrieving the block " + blockNumber, e);
-        }
+    CompletableFuture<Optional<EthBlock.Block>> getBlock(EthHash blockHash) {
+        return handleErrorFutureRequest(web3j.ethGetBlockByHash(blockHash.withLeading0x(), true))
+                .thenApply(Optional::ofNullable);
     }
 
-    Optional<EthBlock> getBlock(EthHash blockHash) {
-        try {
-            return Optional.ofNullable(web3j.ethGetBlockByHash(blockHash.withLeading0x(), true).send());
-        } catch (IOException e) {
-            throw new EthereumApiException("error while retrieving the block " + blockHash.withLeading0x(), e);
-        }
+    private <S, T extends Response<S>> CompletableFuture<S> handleErrorFutureRequest(final Request<?, T> request) {
+        return request.sendAsync().thenCompose(response -> {
+            if (response.hasError()) {
+                return CompletableFuture.failedFuture(new EthereumApiException(response.getError().getMessage()));
+            }
+            return CompletableFuture.completedFuture(response.getResult());
+        });
     }
 }

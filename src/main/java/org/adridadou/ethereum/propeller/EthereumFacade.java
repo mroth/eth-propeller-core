@@ -78,8 +78,8 @@ public class EthereumFacade {
      * @param <T> the proxy object type
      * @return The contract proxy object
      */
-    public <T> T createContractProxy(EthAddress address, EthAccount account, Class<T> contractInterface) {
-        return createContractProxy(getDetails(address), address, account, contractInterface);
+    public <T> CompletableFuture<T> createContractProxy(EthAddress address, EthAccount account, Class<T> contractInterface) {
+        return getDetails(address).thenApply(d -> createContractProxy(d, address, account, contractInterface));
     }
 
 
@@ -87,8 +87,8 @@ public class EthereumFacade {
         return ethereumProxy.getSmartContract(contract, address, account);
     }
 
-    public SmartContract createSmartContract(EthAddress address, EthAccount account) {
-        return createSmartContract(getDetails(address), address, account);
+    public CompletableFuture<SmartContract> createSmartContract(EthAddress address, EthAccount account) {
+        return getDetails(address).thenApply(d -> createSmartContract(d, address, account));
     }
 
     public SmartContract createSmartContract(EthAbi abi, EthAddress address, EthAccount account) {
@@ -162,7 +162,7 @@ public class EthereumFacade {
      * @param address The address to check
      * @return Whether it exists or not
      */
-    public boolean addressExists(EthAddress address) {
+    public CompletableFuture<Boolean> addressExists(EthAddress address) {
         return ethereumProxy.addressExists(address);
     }
 
@@ -171,7 +171,7 @@ public class EthereumFacade {
      * @param addr The address to check
      * @return The current balance
      */
-    public EthValue getBalance(EthAddress addr) {
+    public CompletableFuture<EthValue> getBalance(EthAddress addr) {
         return ethereumProxy.getBalance(addr);
     }
 
@@ -180,7 +180,7 @@ public class EthereumFacade {
      * @param account The account to check
      * @return The current  balance
      */
-    public EthValue getBalance(EthAccount account) {
+    public CompletableFuture<EthValue> getBalance(EthAccount account) {
         return ethereumProxy.getBalance(account.getAddress());
     }
 
@@ -231,7 +231,7 @@ public class EthereumFacade {
      * @param address The address from which we want the Nonce
      * @return The Nonce
      */
-    public Nonce getNonce(EthAddress address) {
+    public CompletableFuture<Nonce> getNonce(EthAddress address) {
         return ethereumProxy.getNonce(address);
     }
 
@@ -244,7 +244,7 @@ public class EthereumFacade {
      * @param address The target address
      * @return The GasUsage
      */
-    public GasUsage estimateGas(EthValue value, EthData data, EthAccount account, EthAddress address) {
+    public CompletableFuture<GasUsage> estimateGas(EthValue value, EthData data, EthAccount account, EthAddress address) {
         return ethereumProxy.estimateGas(value, data, account, address);
     }
 
@@ -262,7 +262,7 @@ public class EthereumFacade {
      * @param address The smart contract's address
      * @return The code
      */
-    public SmartContractByteCode getCode(EthAddress address) {
+    public CompletableFuture<SmartContractByteCode> getCode(EthAddress address) {
         return ethereumProxy.getCode(address);
     }
 
@@ -534,7 +534,7 @@ public class EthereumFacade {
      * @param hash The hash of the transaction
      * @return the info
      */
-    public Optional<TransactionInfo> getTransactionInfo(EthHash hash) {
+    public CompletableFuture<Optional<TransactionInfo>> getTransactionInfo(EthHash hash) {
         return ethereumProxy.getTransactionInfo(hash);
     }
 
@@ -548,9 +548,10 @@ public class EthereumFacade {
         return this;
     }
 
-    private SolidityContractDetails getDetails(final EthAddress address) {
-        SmartContractByteCode code = ethereumProxy.getCode(address);
-        SmartContractMetadata metadata = getMetadata(code.getMetadaLink().orElseThrow(() -> new EthereumApiException("no metadata link found for smart contract on address " + address.toString())));
-        return new SolcSolidityContractDetails(metadata.getAbi(), "", "");
+    private CompletableFuture<SolidityContractDetails> getDetails(final EthAddress address) {
+        return ethereumProxy.getCode(address).thenApply(code -> {
+            SmartContractMetadata metadata = getMetadata(code.getMetadaLink().orElseThrow(() -> new EthereumApiException("no metadata link found for smart contract on address " + address.toString())));
+            return new SolcSolidityContractDetails(metadata.getAbi(), "", "");
+        });
     }
 }

@@ -65,7 +65,7 @@ public final class RpcEthereumFacadeProvider {
         EthereumRpc ethRpc = new EthereumRpc(web3j, chainId, config);
         EthereumEventHandler eventHandler = new EthereumEventHandler();
         eventHandler.onReady();
-        return CoreEthereumFacadeProvider.create(ethRpc, eventHandler, config);
+        return CoreEthereumFacadeProvider.create(new EthereumBackendManager(ethRpc), eventHandler, config);
     }
 
     public static InfuraBuilder forInfura(final InfuraKey key) {

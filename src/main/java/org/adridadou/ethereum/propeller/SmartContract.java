@@ -25,17 +25,15 @@ import static org.adridadou.ethereum.propeller.values.EthValue.wei;
  */
 public class SmartContract {
     private final EthAddress address;
-    private final EthereumBackend ethereum;
     private final SolidityContractDetails contract;
     private final EthereumProxy proxy;
     private final EthAccount account;
 
-    SmartContract(SolidityContractDetails contract, EthAccount account, EthAddress address, EthereumProxy proxy, EthereumBackend ethereum) {
+    SmartContract(SolidityContractDetails contract, EthAccount account, EthAddress address, EthereumProxy proxy) {
         this.contract = contract;
         this.account = account;
         this.proxy = proxy;
         this.address = address;
-        this.ethereum = ethereum;
     }
 
     public List<SolidityFunction> getFunctions() {
@@ -71,13 +69,13 @@ public class SmartContract {
                 .collect(Collectors.toList());
     }
 
-    Object callConstFunction(Method method, EthValue value, Object... args) {
+    CompletableFuture<Object> callConstFunction(Method method, EthValue value, Object... args) {
         return getFunction(method).map(func -> {
             EthData data = func.encode(args);
             if (method.getGenericReturnType() instanceof Class && proxy.isVoidType((Class<?>) method.getGenericReturnType())) {
                 return null;
             }
-            return func.decode(ethereum.constantCall(account, address, value, data), method.getGenericReturnType());
+            return proxy.constantCall(account, address, value, data).thenApply(r ->func.decode(r, method.getGenericReturnType()));
         }).orElseThrow(() -> new EthereumApiException("could not find the function " + method.getName() + " that maches the arguments"));
     }
 

@@ -21,10 +21,14 @@ public final class CoreEthereumFacadeProvider {
     }
 
     public static EthereumFacade create(EthereumBackend backend, EthereumConfig config) {
+        return create(new EthereumBackendManager(backend), config);
+    }
+
+    public static EthereumFacade create(EthereumBackendManager backend, EthereumConfig config) {
         return create(backend, new EthereumEventHandler(), config);
     }
 
-    public static EthereumFacade create(EthereumBackend backend, EthereumEventHandler eventHandler, EthereumConfig config) {
+    public static EthereumFacade create(EthereumBackendManager backend, EthereumEventHandler eventHandler, EthereumConfig config) {
         SwarmService swarm = new SwarmService(config.swarmUrl());
         EthereumProxy proxy = new EthereumProxy(backend, eventHandler, config);
 

@@ -32,16 +32,23 @@ object SolidityConversionHelper {
 trait SolidityConversionHelper {
 
   def contractObject[T]()(implicit tag: ClassTag[T]): T = {
-    Try(SolidityConversionHelper.facade
-      .createContractProxy(
-        SolidityConversionHelper.contract,
-        SolidityConversionHelper.contractAddress,
-        SolidityConversionHelper.mainAccount,
-        tag.runtimeClass).asInstanceOf[T]) match {
-      case Success(result) =>
-        result
+    Try(SolidityConversionHelper.facade) match {
+      case Success(facade) =>
+        Try(facade
+          .createContractProxy(
+            SolidityConversionHelper.contract,
+            SolidityConversionHelper.contractAddress,
+            SolidityConversionHelper.mainAccount,
+            tag.runtimeClass).asInstanceOf[T]) match {
+          case Success(result) =>
+            result
+          case Failure(ex) =>
+            ex.printStackTrace()
+            throw ex
+        }
       case Failure(ex) =>
-        throw ex
+        ex.printStackTrace()
+        throw ex;
     }
   }
 
